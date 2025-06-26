@@ -15,17 +15,13 @@ from PyQt6.QtGui import QPalette, QColor
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-# -------------------------------------------------------------------
-# Utilidad: crea un filtro notch de radio r en frecuencia w0 (rad/sample)
-# -------------------------------------------------------------------
+# === Filtro notch dinámico ===
 def make_notch(w0, r=0.98):
     b = [1, -2 * np.cos(w0), 1]
-    a = [1, -2 * r * np.cos(w0), r * r]
+    a = [1, -2 * r * np.cos(w0), r ** 2]
     return b, a
 
-# -------------------------------------------------------------------
-# Canceladores LMS adaptativos con notch para eliminación de portadora
-# -------------------------------------------------------------------
+# === Cancelador LMS para FM ===
 class FMCoChannelCanceller:
     def __init__(self, fs):
         self.fs = fs
@@ -46,7 +42,6 @@ class FMCoChannelCanceller:
 
     def process(self, data):
         if len(data) == 0 or not self.cancel_on:
-            # Passthrough
             return data.real if np.iscomplexobj(data) else data.copy()
 
         t = np.arange(len(data)) / self.fs
@@ -65,6 +60,7 @@ class FMCoChannelCanceller:
             y[n] = err.real
         return y
 
+# === Cancelador LMS para AM ===
 class AMCoChannelCanceller:
     def __init__(self, fs):
         self.fs = fs
@@ -103,9 +99,7 @@ class AMCoChannelCanceller:
             y[n] = err
         return y
 
-# -------------------------------------------------------------------
-# Visualizador profesional: time, freq y waterfall en entorno oscuro
-# -------------------------------------------------------------------
+# === Visualizador profesional ===
 class Visualizer(FigureCanvas):
     def __init__(self, title=""):
         fig = Figure(facecolor="black")
@@ -127,31 +121,26 @@ class Visualizer(FigureCanvas):
         self._apply_theme()
 
     def _apply_theme(self):
-        ax = self.ax
-        ax.set_facecolor("black")
-        ax.title.set_color('white')
-        ax.xaxis.label.set_color('white')
-        ax.yaxis.label.set_color('white')
-        ax.tick_params(colors='white')
-        for spine in ax.spines.values():
+        self.ax.set_facecolor("black")
+        self.ax.title.set_color('white')
+        self.ax.xaxis.label.set_color('white')
+        self.ax.yaxis.label.set_color('white')
+        self.ax.tick_params(colors='white')
+        for spine in self.ax.spines.values():
             spine.set_color('white')
 
-    def set_mode(self, mode):
-        self.mode = mode
+    def set_mode(self, mode): self.mode = mode
+    def set_line_color(self, c): self.line_color = c
 
-    def set_line_color(self, color):
-        self.line_color = color
-
-    def set_settings(self, fft, window, grid, axis, autoscale,
-                     ymin, ymax, ref_level):
+    def set_settings(self, fft, win, grid, axis, auto, ymin, ymax, ref):
         self.fft_size = fft
-        self.window_type = window  # Cambiado aquí
+        self.window_type = win  # Cambiado aquí
         self.grid_on = grid
         self.axis_on = axis
-        self.autoscale = autoscale
+        self.autoscale = auto
         self.ymin = ymin
         self.ymax = ymax
-        self.ref_level = ref_level
+        self.ref_level = ref
 
     def refresh(self, data, fs, center_hz=0, mark_hz=None):
         if data is None or len(data) == 0:
@@ -165,8 +154,7 @@ class Visualizer(FigureCanvas):
         d[:min(len(data), N)] = data[:min(len(data), N)]
         if not np.iscomplexobj(d):
             d = sig.hilbert(d)
-        window = sig.get_window(self.window_type, N, fftbins=True)  # Cambiado aquí
-        d *= window
+        d *= sig.get_window(self.window_type, N, fftbins=True)  # Cambiado aquí
 
         if self.mode == 'time':
             t = np.arange(len(data)) / fs
@@ -178,15 +166,15 @@ class Visualizer(FigureCanvas):
             spec = np.fft.fftshift(np.fft.fft(d))
             freqs = np.fft.fftshift(np.fft.fftfreq(N, 1/fs))
             mag = 20 * np.log10(np.abs(spec) + 1e-6)
-            axis = freqs / 1e6 + center_hz / 1e6
+            x_axis = freqs / 1e6 + center_hz / 1e6
             if self.mode == 'freq':
-                self.ax.plot(axis, mag, color=self.line_color)
-            else:  # waterfall
+                self.ax.plot(x_axis, mag, color=self.line_color)
+            else:
                 if self.history is None or self.history.shape[1] != N:
                     self.history = np.zeros((self.hist_len, N))
                 self.history = np.roll(self.history, -1, axis=0)
                 self.history[-1, :] = mag
-                extent = [axis[0], axis[-1], 0, self.hist_len]
+                extent = [x_axis[0], x_axis[-1], 0, self.hist_len]
                 self.ax.imshow(self.history, aspect='auto', cmap='plasma',
                                origin='upper', extent=extent)
             if mark_hz is not None:
@@ -202,64 +190,52 @@ class Visualizer(FigureCanvas):
         self.ax.grid(self.grid_on, color='white', alpha=0.2)
         self.ax.set_title(self.title)
         self.draw()
-
-# -------------------------------------------------------------------
-# Ventana principal con scroll y switch estilo iPhone
-# -------------------------------------------------------------------
+# === Interfaz principal ===
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Clean RF Canceller — Profesional")
         self.resize(1200, 950)
-
         self.data = np.array([])
         self.fs = 48000
         self.ptr = 0
         self.chunk = 2048
-
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_loop)
         self.fm = FMCoChannelCanceller(self.fs)
         self.am = AMCoChannelCanceller(self.fs)
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_loop)
+        self._theme()
+        self._ui()
+        self.update_view_settings()  # aplica los colores y ajustes iniciales
 
-        self._apply_theme()
-        self._build_ui()
-
-    def _apply_theme(self):
+    def _theme(self):
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Window, QColor("#121212"))
         pal.setColor(QPalette.ColorRole.Base, QColor("#1e1e1e"))
         self.setPalette(pal)
         self.setStyleSheet("""
-            QLabel,QCheckBox,QComboBox,QPushButton,QDoubleSpinBox {
-                color:white; background:#2c2c2c;
+            QLabel, QCheckBox, QComboBox, QPushButton, QDoubleSpinBox {
+                color: white; background: #2c2c2c;
             }
-            QSlider::groove:horizontal { background:#444; height:6px; }
-            QSlider::handle:horizontal { background:white; width:10px; margin:-5px 0; }
-            QGroupBox { color:white; border:1px solid #444; margin-top:10px; }
-            QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 3px; }
-            /* Switch estilo iPhone */
-            QCheckBox::indicator {
-                width: 50px; height: 25px;
-                border-radius: 12px; background: #666;
-            }
-            QCheckBox::indicator:checked {
-                background: #44c767;
-            }
+            QSlider::groove:horizontal { background: #444; height: 6px; }
+            QSlider::handle:horizontal { background: white; width: 10px; margin: -5px 0; }
+            QGroupBox { color: white; border: 1px solid #444; margin-top: 10px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px; }
+            QCheckBox::indicator { width: 40px; height: 20px; }
+            QCheckBox::indicator:unchecked { border-radius:10px; background:#666; }
+            QCheckBox::indicator:checked { border-radius:10px; background:#44c767; }
         """)
 
-    def _build_ui(self):
-        # Contenedor con scroll
+    def _ui(self):
         container = QWidget()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(container)
         self.setCentralWidget(scroll)
-
         layout = QVBoxLayout(container)
 
-        # ---- Top bar ----
+        # Top bar
         bar = QHBoxLayout()
         self.load_btn = QPushButton("📂 Cargar WAV")
         self.start_btn = QPushButton("▶ Iniciar")
@@ -267,122 +243,100 @@ class MainWindow(QMainWindow):
         self.mode_cb = QComboBox(); self.mode_cb.addItems(["FM", "AM"])
         self.cancel_chk = QCheckBox("Cancelación ON"); self.cancel_chk.setChecked(True)
         self.file_label = QLabel("Archivo: (ninguno)")
-        self.file_label.setStyleSheet("color:white")
-        bar.addWidget(self.load_btn)
-        bar.addWidget(self.start_btn)
-        bar.addWidget(self.stop_btn)
-        bar.addWidget(QLabel("Modo:"))
-        bar.addWidget(self.mode_cb)
-        bar.addWidget(self.cancel_chk)
-        bar.addWidget(self.file_label)
-        bar.addStretch()
+        bar.addWidget(self.load_btn); bar.addWidget(self.start_btn)
+        bar.addWidget(self.stop_btn); bar.addWidget(QLabel("Modo:"))
+        bar.addWidget(self.mode_cb); bar.addWidget(self.cancel_chk)
+        bar.addWidget(self.file_label); bar.addStretch()
         layout.addLayout(bar)
 
-        # ---- Parámetros de señal ----
-        params = QHBoxLayout()
+        # Parámetros
+        h2 = QHBoxLayout()
         self.center_spin = QDoubleSpinBox(); self.center_spin.setRange(0,6000); self.center_spin.setDecimals(3); self.center_spin.setValue(100.000)
         self.off_spin    = QDoubleSpinBox(); self.off_spin.setRange(0,6000);    self.off_spin.setDecimals(3);    self.off_spin.setValue(0.0)
-        self.bw_spin     = QDoubleSpinBox(); self.bw_spin.setRange(100,200000);self.bw_spin.setSingleStep(100); self.bw_spin.setValue(12000)
+        self.bw_spin     = QDoubleSpinBox(); self.bw_spin.setRange(100,200000); self.bw_spin.setSingleStep(100); self.bw_spin.setValue(12000)
         self.gain_sld    = QSlider(Qt.Orientation.Horizontal); self.gain_sld.setRange(-60,20); self.gain_sld.setValue(0)
         self.gain_label  = QLabel("0 dB")
         self.gain_sld.valueChanged.connect(lambda v: self.gain_label.setText(f"{v} dB"))
         self.chk_rc      = QCheckBox("Eliminar portadora")
         self.chk_at      = QCheckBox("Auto Tune (AM)")
         self.view_cb     = QComboBox(); self.view_cb.addItems(["time","freq","waterfall"])
-        for w, lbl in [
-            (self.center_spin, "Center (MHz):"),
-            (self.off_spin,    "Offset (MHz):"),
-            (self.bw_spin,     "BW (Hz):"),
-            (self.gain_sld,    "Ganancia (dB):"),
-            (self.gain_label,  None),
-            (self.chk_rc,      None),
-            (self.chk_at,      None),
-            (self.view_cb,     "Vista:")
-        ]:
-            if lbl: params.addWidget(QLabel(lbl))
-            params.addWidget(w)
-        layout.addLayout(params)
+        for w,lbl in [(self.center_spin,"Center (MHz):"),(self.off_spin,"Offset (MHz):"),
+                      (self.bw_spin,"BW (Hz):"),(self.gain_sld,"Ganancia dB:"), (self.gain_label,None),
+                      (self.chk_rc,None),(self.chk_at,None),(self.view_cb,"Vista:")]:
+            if lbl: h2.addWidget(QLabel(lbl))
+            h2.addWidget(w)
+        layout.addLayout(h2)
 
-        # ---- Panel de visualización ----
-        vis_box = QGroupBox("Configuración de visualización")
-        vis_layout = QHBoxLayout(vis_box)
+        # Panel visual
+        gb = QGroupBox("Configuración de visualización"); h3 = QHBoxLayout(gb)
         self.chk_grid    = QCheckBox("Grid");    self.chk_grid.setChecked(True)
-        self.chk_axis    = QCheckBox("Ejes");    self.chk_axis.setChecked(True)
-        self.chk_auto    = QCheckBox("Autoscale");self.chk_auto.setChecked(True)
+        self.chk_axis    = QCheckBox("Etiquetas"); self.chk_axis.setChecked(True)
+        self.chk_auto    = QCheckBox("Autoscale"); self.chk_auto.setChecked(True)
         self.ymin_spin   = QDoubleSpinBox(); self.ymin_spin.setRange(-200,200); self.ymin_spin.setValue(-100)
         self.ymax_spin   = QDoubleSpinBox(); self.ymax_spin.setRange(-200,200); self.ymax_spin.setValue(0)
-        self.ref_spin    = QDoubleSpinBox(); self.ref_spin.setRange(-200,200);    self.ref_spin.setValue(0)
+        self.ref_spin    = QDoubleSpinBox(); self.ref_spin.setRange(-200,200); self.ref_spin.setValue(0)
         self.fft_cb      = QComboBox(); self.fft_cb.addItems(["512","1024","2048","4096"])
         self.win_cb      = QComboBox(); self.win_cb.addItems(["rectangular","hann","hamming","blackman"])
         self.color_o_cb  = QComboBox(); self.color_o_cb.addItems(["cyan","lime","red","magenta","yellow","white"])
         self.color_c_cb  = QComboBox(); self.color_c_cb.addItems(["orange","white","red","blue","green","magenta"])
-        for w, lbl in [
-            (self.chk_grid,    None), (self.chk_axis,   None), (self.chk_auto, None),
-            (self.ymin_spin,  "Ymin:"), (self.ymax_spin,  "Ymax:"), (self.ref_spin,"Ref:"),
-            (self.fft_cb,     "FFT:"), (self.win_cb,     "Ventana:"),
-            (self.color_o_cb, "Color orig.:"),(self.color_c_cb,"Color canc.:")
-        ]:
-            if lbl: vis_layout.addWidget(QLabel(lbl))
-            vis_layout.addWidget(w)
-        layout.addWidget(vis_box)
+        self.color_o_cb.setCurrentText("cyan")
+        self.color_c_cb.setCurrentText("orange")
+        for w,lbl in [(self.chk_grid,None),(self.chk_axis,None),(self.chk_auto,None),
+                      (self.ymin_spin,"Ymin:"),(self.ymax_spin,"Ymax:"),(self.ref_spin,"Ref:"),
+                      (self.fft_cb,"FFT:"),(self.win_cb,"Ventana:"),
+                      (self.color_o_cb,"Color orig."),(self.color_c_cb,"Color canc.")]:
+            if lbl: h3.addWidget(QLabel(lbl)); h3.addWidget(w)
+        layout.addWidget(gb)
 
-        # ---- Visualizadores ----
-        self.vis_o = Visualizer("Original")
-        self.vis_c = Visualizer("Cancelada")
-        layout.addWidget(self.vis_o)
-        layout.addWidget(self.vis_c)
+        self.vis_o = Visualizer("🔵 Original")
+        self.vis_c = Visualizer("🟠 Cancelada")
+        layout.addWidget(self.vis_o); layout.addWidget(self.vis_c)
 
-        # ---- Conexiones ----
+        # Conexiones
         self.load_btn.clicked.connect(self.load_wav)
         self.start_btn.clicked.connect(self.on_start)
         self.stop_btn.clicked.connect(self.timer.stop)
         self.view_cb.currentTextChanged.connect(lambda m: (self.vis_o.set_mode(m), self.vis_c.set_mode(m)))
         self.mode_cb.currentTextChanged.connect(lambda _: setattr(self, 'ptr', 0))
-        # panel visual
-        for w in [self.chk_grid, self.chk_axis, self.chk_auto,
-                  self.ymin_spin, self.ymax_spin, self.ref_spin,
-                  self.fft_cb, self.win_cb, self.color_o_cb, self.color_c_cb]:
-            if isinstance(w, QCheckBox):
-                w.stateChanged.connect(self.update_view_settings)
-            elif isinstance(w, QComboBox):
-                w.currentTextChanged.connect(self.update_view_settings)
-            else:
-                w.valueChanged.connect(self.update_view_settings)
+        for w in [self.chk_grid,self.chk_axis,self.chk_auto,
+                  self.ymin_spin,self.ymax_spin,self.ref_spin,
+                  self.fft_cb,self.win_cb,self.color_o_cb,self.color_c_cb]:
+            if isinstance(w, QCheckBox): w.stateChanged.connect(self.update_view_settings)
+            elif isinstance(w, QComboBox): w.currentTextChanged.connect(self.update_view_settings)
+            else: w.valueChanged.connect(self.update_view_settings)
 
     def update_view_settings(self, *_):
         fft = int(self.fft_cb.currentText())
         win = self.win_cb.currentText()
         grid = self.chk_grid.isChecked()
         axis = self.chk_axis.isChecked()
-        autos = self.chk_auto.isChecked()
+        auto = self.chk_auto.isChecked()
         ymin = self.ymin_spin.value()
         ymax = self.ymax_spin.value()
         ref = self.ref_spin.value()
-        col_o = self.color_o_cb.currentText()
-        col_c = self.color_c_cb.currentText()
-        for vis, col in [(self.vis_o, col_o), (self.vis_c, col_c)]:
-            vis.set_settings(fft, win, grid, axis, autos, ymin, ymax, ref)
-            vis.set_line_color(col)
+        color_o = self.color_o_cb.currentText()
+        color_c = self.color_c_cb.currentText()
+        self.vis_o.set_settings(fft, win, grid, axis, auto, ymin, ymax, ref)
+        self.vis_c.set_settings(fft, win, grid, axis, auto, ymin, ymax, ref)
+        self.vis_o.set_line_color(color_o)
+        self.vis_c.set_line_color(color_c)
 
     def load_wav(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar WAV", filter="WAV files (*.wav)")
-        if not path:
-            return
+        path,_ = QFileDialog.getOpenFileName(self,"Seleccionar WAV",filter="WAV files (*.wav)")
+        if not path: return
         data, fs = sf.read(path)
         if data.ndim > 1 and data.shape[1] >= 2:
             data = data[:,0] + 1j * data[:,1]
         elif data.ndim > 1:
             data = data[:,0]
-        if data.size == 0:
-            QMessageBox.warning(self, "Error", "El archivo WAV está vacío.")
-            return
+
         self.data = data
         self.fs = fs
         self.ptr = 0
         self.fm = FMCoChannelCanceller(self.fs)
         self.am = AMCoChannelCanceller(self.fs)
         fname = path.split("/")[-1].split("\\")[-1]
-        self.file_label.setText(f"Archivo: {fname}")
+        self.file_label.setText(f"Archivo: " + fname)
 
     def on_start(self):
         if self.data.size == 0:
@@ -422,9 +376,7 @@ class MainWindow(QMainWindow):
         self.vis_o.refresh(seg, self.fs, center_hz)
         self.vis_c.refresh(proc, self.fs, center_hz, mark)
 
-# -------------------------------------------------------------------
-# Lanzamiento
-# -------------------------------------------------------------------
+# === Lanzamiento de la aplicación ===
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow()
