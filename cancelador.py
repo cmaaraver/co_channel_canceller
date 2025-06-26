@@ -119,7 +119,7 @@ class Visualizer(FigureCanvas):
     def set_mode(self, m): self.mode = m
     def set_line_color(self, c): self.line_color = c
     def set_settings(self, fft, win, grid, axis, auto, ymin, ymax, ref):
-        self.fft_size, self.window_type = fft, win  # Cambiado aquí
+        self.fft_size, self.window_type = fft, win  
         self.grid_on, self.axis_on, self.autoscale = grid, axis, auto
         self.ymin, self.ymax, self.ref_level = ymin, ymax, ref
 
@@ -130,8 +130,7 @@ class Visualizer(FigureCanvas):
         d = np.zeros(N, dtype=complex)
         d[:min(len(data),N)] = data[:min(len(data),N)]
         if not np.iscomplexobj(d): d = sig.hilbert(d)
-        d *= sig.get_window(self.window_type, N, fftbins=True)  # Cambiado aquí
-
+        d *= sig.get_window(self.window_type, N, fftbins=True)  
         if self.mode=='time':
             t = np.arange(len(data))/fs
             self.ax.plot(t*1e3, np.real(data), color=self.line_color)
