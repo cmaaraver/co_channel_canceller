@@ -240,6 +240,7 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         content = QWidget()
         layout = QVBoxLayout(content)
+
         # Top bar
         bar = QHBoxLayout()
         self.lbl_file = QLabel("Archivo no cargado")
@@ -252,6 +253,7 @@ class MainWindow(QMainWindow):
         for w in [self.lbl_file, self.btn_load, self.btn_start, self.chk_listen, QLabel("Vol"), self.sld_vol]:
             bar.addWidget(w)
         layout.addLayout(bar)
+
         # Frecuencia central y offset
         freq = QHBoxLayout()
         self.center_box = QDoubleSpinBox()
@@ -259,6 +261,7 @@ class MainWindow(QMainWindow):
         self.center_box.setSuffix(" MHz")
         self.center_box.setRange(0.0, 15000.0)
         self.center_box.setSingleStep(0.1)
+        self.center_box.setToolTip("Frecuencia central de la señal (MHz)")
         self.center_box.valueChanged.connect(lambda v: setattr(self, "center_hz", v * 1e6))
         freq.addWidget(QLabel("Freq Central"))
         freq.addWidget(self.center_box)
@@ -267,17 +270,20 @@ class MainWindow(QMainWindow):
         self.offset_box.setSuffix(" Hz")
         self.offset_box.setRange(-1e6, 1e6)
         self.offset_box.setSingleStep(1)
+        self.offset_box.setToolTip("Offset de la portadora a cancelar (Hz)")
         self.offset_box.valueChanged.connect(self.update_offset_bar)
         freq.addWidget(QLabel("Offset"))
         freq.addWidget(self.offset_box)
         layout.addLayout(freq)
-        # Cancelador único
+
+        # Cancelador único con controles diferenciados AM/FM
         g1 = QGroupBox("Co-Channel Canceller")
         l1 = QVBoxLayout(g1)
 
         # Fila 1: Modo
         row_mode = QHBoxLayout()
         self.mode_cb = QComboBox(); self.mode_cb.addItems(["AM", "FM"])
+        self.mode_cb.setToolTip("Selecciona el modo de cancelación")
         row_mode.addWidget(QLabel("Modo:"))
         row_mode.addWidget(self.mode_cb)
         l1.addLayout(row_mode)
@@ -285,8 +291,11 @@ class MainWindow(QMainWindow):
         # Fila 2: Enabled, Remove Carrier, Auto Tune
         row1 = QHBoxLayout()
         self.chk_enable = QCheckBox("Enabled")
+        self.chk_enable.setToolTip("Activa o desactiva el cancelador")
         self.chk_remove_carrier = QCheckBox("Remove Carrier")
+        self.chk_remove_carrier.setToolTip("Elimina la portadora (solo AM)")
         self.chk_auto_tune = QCheckBox("Auto Tune")
+        self.chk_auto_tune.setToolTip("Ajuste automático de la frecuencia de la interferencia (solo AM, opcional)")
         row1.addWidget(self.chk_enable)
         row1.addWidget(self.chk_remove_carrier)
         row1.addWidget(self.chk_auto_tune)
@@ -299,6 +308,7 @@ class MainWindow(QMainWindow):
         self.carrier_offset.setSuffix(" Hz")
         self.carrier_offset.setRange(-1e6, 1e6)
         self.carrier_offset.setSingleStep(1)
+        self.carrier_offset.setToolTip("Offset principal de la portadora a cancelar (Hz)")
         row2.addWidget(QLabel("Carrier Offset"))
         row2.addWidget(self.carrier_offset)
         self.bandwidth = QDoubleSpinBox()
@@ -306,6 +316,7 @@ class MainWindow(QMainWindow):
         self.bandwidth.setSuffix(" Hz")
         self.bandwidth.setRange(10, 20000)
         self.bandwidth.setSingleStep(10)
+        self.bandwidth.setToolTip("Ancho de banda del filtro de referencia (Hz)")
         row2.addWidget(QLabel("Bandwidth"))
         row2.addWidget(self.bandwidth)
         self.if_offset = QDoubleSpinBox()
@@ -313,6 +324,7 @@ class MainWindow(QMainWindow):
         self.if_offset.setSuffix(" Hz")
         self.if_offset.setRange(-1e6, 1e6)
         self.if_offset.setSingleStep(1)
+        self.if_offset.setToolTip("Offset fino de la referencia (Hz)")
         row2.addWidget(QLabel("IF Offset"))
         row2.addWidget(self.if_offset)
         l1.addLayout(row2)
@@ -322,6 +334,7 @@ class MainWindow(QMainWindow):
         self.sld_correction = QSlider(Qt.Orientation.Horizontal)
         self.sld_correction.setRange(-20, 20)
         self.sld_correction.setValue(0)
+        self.sld_correction.setToolTip("Ajusta la ganancia de la referencia (dB)")
         self.lbl_correction = QLabel("0 dB")
         row3.addWidget(QLabel("Correction"))  # Cambia a "Sensitivity" en FM
         row3.addWidget(self.sld_correction)
@@ -330,7 +343,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(g1)
 
-        # --- Mostrar/ocultar controles según modo ---
+        # Mostrar/ocultar controles según modo
         def update_amfm_controls():
             is_am = self.mode_cb.currentText() == "AM"
             self.chk_remove_carrier.setVisible(is_am)
@@ -345,14 +358,23 @@ class MainWindow(QMainWindow):
         vis_cfg = QGroupBox("Visualización")
         vis_l = QHBoxLayout(vis_cfg)
         self.fft_cb = QComboBox(); self.fft_cb.addItems([str(x) for x in [128, 256, 512, 1024, 2048, 4096, 8192]])
+        self.fft_cb.setToolTip("Tamaño de la FFT")
         self.win_cb = QComboBox(); self.win_cb.addItems(["hann", "hamming", "blackman", "rectangular"])
+        self.win_cb.setToolTip("Tipo de ventana para la FFT")
         self.co_orig_cb = QComboBox(); self.co_orig_cb.addItems(["cyan", "lime", "yellow", "white"])
+        self.co_orig_cb.setToolTip("Color de la señal original")
         self.co_proc_cb = QComboBox(); self.co_proc_cb.addItems(["orange", "red", "magenta", "white"])
+        self.co_proc_cb.setToolTip("Color de la señal cancelada")
         self.chk_grid = QCheckBox("Grid"); self.chk_grid.setChecked(True)
+        self.chk_grid.setToolTip("Mostrar cuadrícula")
         self.chk_auto = QCheckBox("Autoscale"); self.chk_auto.setChecked(True)
+        self.chk_auto.setToolTip("Ajuste automático del eje Y")
         self.ymin_s = QDoubleSpinBox(); self.ymin_s.setRange(-200, 200); self.ymin_s.setValue(-100)
+        self.ymin_s.setToolTip("Valor mínimo eje Y (dB)")
         self.ymax_s = QDoubleSpinBox(); self.ymax_s.setRange(-200, 200); self.ymax_s.setValue(0)
+        self.ymax_s.setToolTip("Valor máximo eje Y (dB)")
         self.span_s = QDoubleSpinBox(); self.span_s.setRange(0.01, 100.0); self.span_s.setValue(2.0)
+        self.span_s.setToolTip("Span de frecuencia mostrado (MHz)")
         for w, lbl in [
             (self.fft_cb, "FFT:"), (self.win_cb, "Ventana:"),
             (self.co_orig_cb, "Color original:"), (self.co_proc_cb, "Color cancelada:"),
@@ -362,6 +384,7 @@ class MainWindow(QMainWindow):
             if lbl: vis_l.addWidget(QLabel(lbl))
             vis_l.addWidget(w)
         layout.addWidget(vis_cfg)
+
         # Visualizadores con selector de modo
         vis_container = QWidget()
         vis_layout = QHBoxLayout(vis_container)
@@ -406,7 +429,9 @@ class MainWindow(QMainWindow):
         self.proc_mode_cb.currentTextChanged.connect(self.update_view_modes)
         self.update_view_modes()
 
-        # --- AGREGA ESTAS DOS LÍNEAS ---
+        # Autoscale refresca la gráfica al cambiar
+        self.chk_auto.stateChanged.connect(lambda _: self.update_loop(force=True))
+
         self.btn_load.clicked.connect(self.load_wav)
         self.btn_start.clicked.connect(self.start_processing)
 
@@ -419,7 +444,6 @@ class MainWindow(QMainWindow):
         self.wfall2.setVisible(proc_mode == "Waterfall")
 
     def update_offset_bar(self):
-        # Actualiza la barra roja en la gráfica según el offset
         self.update_loop(force=True)
 
     def load_wav(self):
